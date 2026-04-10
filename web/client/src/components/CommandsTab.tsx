@@ -136,7 +136,7 @@ cat /sys/class/hwmon/hwmon2/pwm1
 cat /sys/class/hwmon/hwmon2/fan1_input
 
 # Re-run setup after kernel update (re-detects hwmon index)
-bash proxfansx-setup.sh`;
+bash ms01-fancontrol-setup.sh`;
 
   const troubleshootCmds = `# Check if nct6775 module is loaded
 lsmod | grep nct6775
@@ -176,14 +176,14 @@ cat /sys/class/hwmon/hwmon2/name`;
         <CodeBlock
           title="Install / Re-run"
           lang="bash"
-          code="bash proxfansx-setup.sh"
+          code="bash ms01-fancontrol-setup.sh"
           actions={
             <button
               style={S.dlBtn}
               onClick={() => {
                 const a = document.createElement("a");
-                a.href = "/proxfansx-setup.sh";
-                a.download = "proxfansx-setup.sh";
+                a.href = "/ms01-fancontrol-setup.sh";
+                a.download = "ms01-fancontrol-setup.sh";
                 a.click();
               }}
               data-testid="btn-download-script"

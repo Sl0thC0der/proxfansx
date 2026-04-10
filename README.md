@@ -1,11 +1,12 @@
 # ProxFansX
 
 <p align="center">
-  <strong>Fan speed management for Minisforum MS-01 / Proxmox VE</strong>
+  <strong>Fan speed management for Proxmox VE and Minisforum devices</strong>
 </p>
 
 <p align="center">
   <a href="#one-line-install">Install</a> •
+  <a href="#device-compatibility">Compatibility</a> •
   <a href="#web-dashboard">Dashboard</a> •
   <a href="#presets">Presets</a> •
   <a href="#how-it-works">How It Works</a> •
@@ -19,20 +20,39 @@
 Run this command on your Proxmox VE / Debian server:
 
 ```bash
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/Sl0thC0der/proxfansx/main/install_ms01_fancontrol.sh)"
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/Sl0thC0der/proxfansx/main/install_proxfansx.sh)"
 ```
 
-The installer will:
+The installer auto-detects your hardware and branches accordingly — no manual configuration needed.
 
-| Step | Action |
-|------|--------|
-| 1 | Install dependencies (`lm-sensors`, `fancontrol`, `curl`, `jq`, `git`) |
-| 2 | Clone this repository |
-| 3 | Load `nct6775` kernel module and persist across reboots |
-| 4 | Write `/etc/sensors.d/ms-01.conf` (suppress bogus readings) |
-| 5 | Auto-detect hwmon device and active PWM channels |
-| 6 | Write `/etc/fancontrol` with community-verified quiet curve |
-| 7 | Install and start the web dashboard on port **8010** |
+---
+
+## Device Compatibility
+
+| Device | Chip | Module | PWM Control | Notes |
+|--------|------|--------|-------------|-------|
+| Minisforum MS-01 | NCT6798 | nct6775 | ✅ Full | CPU blower not controllable (MCU-driven) |
+| Generic NCT67xx boards | NCT67xx | nct6775 | ✅ Full | All exposed PWM channels |
+| Minisforum BD790i / BD680i | ITE IT87xx | it87 | ⚠️ Partial | CPU fan (pwm4) has no sysfs — use SYS_FAN header |
+| Generic ITE IT87xx boards | ITE IT87xx | it87 | ⚠️ Partial | Out-of-tree driver may be required |
+| Minisforum UM/HX series | AMD (k10temp) | k10temp | ❌ Monitoring only | No hwmon PWM on AMD SoC — use ryzenadj for TDP |
+| Minisforum N5 Pro | ITE IT5571 (EC) | none | ❌ None | EC not a Super I/O — no kernel driver |
+| Other / Unknown | Generic | auto | ⚠️ Best-effort | Installer scans available PWM channels |
+
+---
+
+## Installer Behavior
+
+| Detected Chip | Branch | Outcome |
+|---------------|--------|---------|
+| NCT6798 on MS-01 | `nct67xx` | Full fancontrol + dashboard |
+| Any NCT67xx | `nct67xx` | Full fancontrol + dashboard |
+| ITE IT87xx | `ite87xx` | fancontrol (partial) + dashboard |
+| AMD k10temp only | `amd_no_pwm` | Dashboard (monitoring only) |
+| Unknown PWM found | `generic` | fancontrol (best-effort) + dashboard |
+| No PWM at all | `unsupported` | Dashboard (monitoring only) |
+
+---
 
 ## Web Dashboard
 
@@ -42,14 +62,19 @@ After installation, open your browser:
 http://<YOUR-SERVER-IP>:8010
 ```
 
-Modern dark dashboard with:
+Dark dashboard with ProxMenux-style design:
 
-- **Overview** — Live CPUTIN temperature, fan RPM, PWM duty, area charts
+- **Overview** — Live temperature, fan RPM, PWM duty, area charts, hardware details, device-specific warnings
 - **Fan Curve** — Visual PWM vs temperature curve, edit parameters live
 - **Presets** — Quiet / Silent / Balanced / Performance, import custom `/etc/fancontrol` files
 - **Commands** — Copy-paste reference for monitoring and troubleshooting
+- **Compatibility** — Full device support matrix
+
+> On AMD and unsupported devices the dashboard runs in **monitoring-only mode** — Fan Curve, Presets, and Commands tabs are hidden automatically.
 
 The dashboard runs as a systemd service (`proxfansx-web.service`) that starts automatically on boot.
+
+---
 
 ## Presets
 
@@ -60,16 +85,24 @@ The dashboard runs as a systemd service (`proxfansx-web.service`) that starts au
 | Balanced | 55°C | 75°C | 30 | 255 | 140 | 40 | 10s |
 | Performance | 50°C | 70°C | 100 | 255 | 130 | 50 | 5s |
 
-Community-verified values from [ServeTheHome](https://www.servethehome.com/) and [pcfe.net](https://pcfe.net/).
+---
 
 ## How It Works
 
-- **Chip**: Nuvoton `nct6798` (loaded via `nct6775` kernel module)
-- **Controlled fans**: `pwm1` + `pwm2` (system/chassis fans)
-- **Temperature sensor**: `temp2_input` (CPUTIN)
+- **Auto-detection**: The installer scans hwmon devices and selects the matching install branch
+- **Chip** (MS-01): Nuvoton `nct6798` loaded via `nct6775` kernel module
+- **Controlled fans** (MS-01): `pwm1` + `pwm2` (system/chassis fans)
+- **Temperature sensor** (MS-01): `temp2_input` (CPUTIN)
 - **Fan curve**: Linear ramp from MINTEMP to MAXTEMP
+- **device.json**: Written at install time — tells the dashboard which chip/family/mode was detected
 
-> ⚠️ **The CPU blower fan is NOT controllable.** It is driven by an internal microcontroller and is not exposed via the nct6798 hwmon interface. Only the system/chassis fans on `pwm1` and `pwm2` respond to this configuration.
+> ⚠️ **MS-01 only**: The CPU blower fan is NOT controllable. It is driven by an internal microcontroller not exposed via nct6798 hwmon. Only the system/chassis fans on `pwm1` and `pwm2` respond to this configuration.
+
+> ⚠️ **ITE IT87xx (BD series)**: The CPU fan header (pwm4) has no sysfs interface. Connect your CPU cooler to a SYS_FAN header to regain control. The out-of-tree `it87` driver may be required on some kernels.
+
+> ℹ️ **AMD UM/HX devices**: No hwmon PWM. Dashboard installs in monitoring-only mode. Use `ryzenadj` for TDP limiting.
+
+---
 
 ## Commands
 
@@ -87,9 +120,14 @@ journalctl -u fancontrol -f
 # View active config
 cat /etc/fancontrol
 
-# Re-run installer (after kernel update)
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/Sl0thC0der/proxfansx/main/install_ms01_fancontrol.sh)"
+# View detected device profile
+cat /usr/local/share/proxfansx/device.json
+
+# Re-run installer
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/Sl0thC0der/proxfansx/main/install_proxfansx.sh)"
 ```
+
+---
 
 ## Uninstall
 
@@ -101,9 +139,11 @@ systemctl daemon-reload
 
 systemctl stop fancontrol
 rm /etc/fancontrol
-rm /etc/sensors.d/ms-01.conf
+rm /etc/sensors.d/proxfansx.conf
 rm -rf /usr/local/share/proxfansx
 ```
+
+---
 
 ## License
 

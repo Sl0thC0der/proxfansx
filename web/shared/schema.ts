@@ -56,3 +56,15 @@ export const sensorLog = sqliteTable("sensor_log", {
 export const insertSensorLogSchema = createInsertSchema(sensorLog).omit({ id: true });
 export type InsertSensorLog = z.infer<typeof insertSensorLogSchema>;
 export type SensorLog = typeof sensorLog.$inferSelect;
+
+// ── Device Info (written by installer, read-only in UI) ───────────────────────────
+export interface DeviceInfo {
+  family: "nct67xx" | "ite87xx" | "amd_no_pwm" | "generic" | "unsupported";
+  chip: string;          // e.g. "nct6798"
+  module: string;        // e.g. "nct6775"
+  device_name: string;   // e.g. "Minisforum MS-01"
+  pwm_channels: string[]; // e.g. ["pwm1", "pwm2"]
+  temp_sensor: string;   // e.g. "temp2_input"
+  monitoring_only: boolean;
+  notes?: string;
+}

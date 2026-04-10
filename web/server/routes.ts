@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertFanConfigSchema, insertPresetSchema } from "@shared/schema";
 import multer from "multer";
+import * as fs from "fs";
+import * as path from "path";
 
 // multer for .conf file uploads (memory storage)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 512 * 1024 } });
@@ -179,6 +181,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
     res.json(log[0] ?? null);
+  });
+
+  // ── Device Info ─────────────────────────────────────────────────────────────
+  // The installer writes /usr/local/share/proxfansx/device.json at install time.
+  // In dev/preview mode we fall back to a sensible default.
+  app.get("/api/device", (_req, res) => {
+    const DEVICE_FILE = "/usr/local/share/proxfansx/device.json";
+    try {
+      if (fs.existsSync(DEVICE_FILE)) {
+        const raw = fs.readFileSync(DEVICE_FILE, "utf-8");
+        return res.json(JSON.parse(raw));
+      }
+    } catch {
+      // fall through to default
+    }
+    // Dev/preview fallback
+    res.json({
+      family: "nct67xx",
+      chip: "nct6798",
+      module: "nct6775",
+      device_name: "Minisforum MS-01",
+      pwm_channels: ["pwm1", "pwm2"],
+      temp_sensor: "temp2_input",
+      monitoring_only: false,
+      notes: "CPU blower is not controllable.",
+    });
   });
 
   return httpServer;

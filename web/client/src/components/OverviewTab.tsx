@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { FanConfig, SensorLog } from "@shared/schema";
+import type { FanConfig, SensorLog, DeviceInfo } from "@shared/schema";
 import { useEffect, useRef } from "react";
-import { Thermometer, Wind, Zap, Activity, AlertTriangle, LayoutGrid } from "lucide-react";
+import { Thermometer, Wind, Activity, AlertTriangle, LayoutGrid, Info } from "lucide-react";
 
-interface Props { config?: FanConfig; latest?: SensorLog; }
+interface Props { config?: FanConfig; latest?: SensorLog; device?: DeviceInfo; }
 
 function tempColor(t: number) {
   if (t < 60) return "#4ade80";
@@ -14,7 +14,7 @@ function tempColor(t: number) {
 }
 function pwmPct(p: number) { return Math.round((p / 255) * 100); }
 
-export default function OverviewTab({ config, latest }: Props) {
+export default function OverviewTab({ config, latest, device }: Props) {
   const { data: history = [] } = useQuery<SensorLog[]>({
     queryKey: ["/api/sensors"],
     queryFn: () => apiRequest("GET", "/api/sensors").then(r => r.json()),
@@ -27,48 +27,94 @@ export default function OverviewTab({ config, latest }: Props) {
   const pwm1 = latest?.pwm1 ?? 0;
   const pwm2 = latest?.pwm2 ?? 0;
 
+  const monitoringOnly = device?.monitoring_only ?? false;
+  const chipLabel = device ? `${device.chip} · ${device.module}` : "nct6798 · nct6775";
+  const tempSensorLabel = device?.temp_sensor ?? "temp2_input";
+  const pwmChannels = device?.pwm_channels?.join(", ") ?? "pwm1, pwm2";
+
+  // Build hardware detail rows based on detected device
+  const hwRows: [string, string][] = [
+    ["Device", device?.device_name ?? "Minisforum MS-01"],
+    ["Fan Controller", device?.chip ?? "Nuvoton nct6798"],
+    ["Kernel Module", device?.module === "none" ? "N/A" : (device?.module ?? "nct6775")],
+    ["Temp Sensor", `${tempSensorLabel}`],
+    ["Controllable Fans", monitoringOnly ? "None (no PWM)" : pwmChannels],
+    ["Poll Interval", `${config?.interval ?? 10} seconds`],
+  ];
+  if (!monitoringOnly) {
+    hwRows.push(["Min Start PWM", `${config?.minstart ?? 150}/255`]);
+  }
+
   return (
     <div className="space-y-5 max-w-6xl mx-auto">
 
-      {/* ── 4-column stat cards ── */}
+      {/* ── Stat cards ── */}
       <div className="grid grid-cols-4 gap-4" data-testid="stat-cards">
 
         <StatCard
-          label="CPUTIN Temperature"
+          label={`${tempSensorLabel} Temperature`}
           value={`${temp.toFixed(1)}°C`}
           valueColor={tempColor(temp)}
-          sub="temp2_input · nct6798"
+          sub={chipLabel}
           icon={<Thermometer size={16} />}
           bar={{ value: temp, min: 30, max: 90, color: tempColor(temp) }}
           data-testid="card-temp"
         />
+
+        {monitoringOnly ? (
+          /* In monitoring-only mode, replace fan cards with info cards */
+          <>
+            <StatCard
+              label="Fan Control"
+              value="N/A"
+              valueColor="#555"
+              sub="No PWM on this platform"
+              icon={<Wind size={16} />}
+              data-testid="card-fan1"
+            />
+            <StatCard
+              label="Chip Family"
+              value={device?.family?.toUpperCase() ?? "N/A"}
+              valueColor="#a78bfa"
+              sub={device?.chip ?? ""}
+              icon={<LayoutGrid size={16} />}
+              data-testid="card-fan2"
+            />
+          </>
+        ) : (
+          <>
+            <StatCard
+              label="Fan 1 Speed"
+              value={`${fan1} RPM`}
+              sub={`PWM: ${pwm1}/255 (${pwmPct(pwm1)}%)`}
+              icon={<Wind size={16} />}
+              bar={{ value: fan1, min: 0, max: 2400, color: "#3b82f6" }}
+              data-testid="card-fan1"
+            />
+            <StatCard
+              label="Fan 2 Speed"
+              value={`${fan2} RPM`}
+              sub={`PWM: ${pwm2}/255 (${pwmPct(pwm2)}%)`}
+              icon={<Wind size={16} />}
+              bar={{ value: fan2, min: 0, max: 2400, color: "#3b82f6" }}
+              data-testid="card-fan2"
+            />
+          </>
+        )}
+
         <StatCard
-          label="Fan 1 Speed"
-          value={`${fan1} RPM`}
-          sub={`PWM: ${pwm1}/255 (${pwmPct(pwm1)}%)`}
-          icon={<Wind size={16} />}
-          bar={{ value: fan1, min: 0, max: 2400, color: "#3b82f6" }}
-          data-testid="card-fan1"
-        />
-        <StatCard
-          label="Fan 2 Speed"
-          value={`${fan2} RPM`}
-          sub={`PWM: ${pwm2}/255 (${pwmPct(pwm2)}%)`}
-          icon={<Wind size={16} />}
-          bar={{ value: fan2, min: 0, max: 2400, color: "#3b82f6" }}
-          data-testid="card-fan2"
-        />
-        <StatCard
-          label="Fan Curve"
-          value={`${config?.mintemp ?? 60}–${config?.maxtemp ?? 80}°C`}
-          valueColor="#a78bfa"
-          sub={`Off below ${config?.mintemp ?? 60}°C · Full at ${config?.maxtemp ?? 80}°C`}
+          label={monitoringOnly ? "Mode" : "Fan Curve"}
+          value={monitoringOnly ? "Monitoring" : `${config?.mintemp ?? 60}–${config?.maxtemp ?? 80}°C`}
+          valueColor={monitoringOnly ? "#3b82f6" : "#a78bfa"}
+          sub={monitoringOnly
+            ? "Temperature only — no PWM"
+            : `Off below ${config?.mintemp ?? 60}°C · Full at ${config?.maxtemp ?? 80}°C`}
           icon={<Activity size={16} />}
           data-testid="card-curve"
         />
       </div>
 
-      {/* ── Temperature + Fan speed area charts ── */}
+      {/* ── Charts ── */}
       <div className="grid grid-cols-2 gap-4">
         <ChartCard
           title="Temperature"
@@ -81,18 +127,21 @@ export default function OverviewTab({ config, latest }: Props) {
           data-testid="chart-temp"
         />
         <ChartCard
-          title="Fan Speed"
+          title={monitoringOnly ? "Temperature (alt)" : "Fan Speed"}
           icon={<Wind size={14} />}
-          data={history.map(h => h.fan1rpm ?? 0)}
-          min={0} max={2400}
+          data={monitoringOnly
+            ? history.map(h => h.cputin ?? 0)  // show temp again if no fans
+            : history.map(h => h.fan1rpm ?? 0)}
+          min={monitoringOnly ? 30 : 0}
+          max={monitoringOnly ? 90 : 2400}
           color="#4ade80"
           fillColor="rgba(74,222,128,0.12)"
-          unit=" RPM"
+          unit={monitoringOnly ? "°C" : " RPM"}
           data-testid="chart-fan"
         />
       </div>
 
-      {/* ── Chip details section ── */}
+      {/* ── Hardware details ── */}
       <div
         className="rounded-xl border p-5"
         style={{ background: "#141414", borderColor: "#242424" }}
@@ -103,41 +152,86 @@ export default function OverviewTab({ config, latest }: Props) {
           <h3 className="font-semibold text-sm text-white">Hardware Details</h3>
         </div>
         <div className="grid grid-cols-3 gap-x-8 gap-y-3 text-xs">
-          {[
-            ["Fan Controller", "Nuvoton nct6798"],
-            ["Kernel Module", "nct6775"],
-            ["Temp Sensor", "temp2_input (CPUTIN)"],
-            ["Controlled Fans", "pwm1, pwm2"],
-            ["Poll Interval", `${config?.interval ?? 10} seconds`],
-            ["Min Start PWM", `${config?.minstart ?? 150}/255`],
-          ].map(([k, v]) => (
+          {hwRows.map(([k, v]) => (
             <div key={k} className="flex justify-between border-b pb-2" style={{ borderColor: "#1e1e1e" }}>
               <span style={{ color: "#666" }}>{k}</span>
               <span className="font-mono font-medium" style={{ color: "#e5e5e5" }}>{v}</span>
             </div>
           ))}
         </div>
+        {device?.notes && (
+          <p className="mt-4 text-xs leading-relaxed" style={{ color: "#666" }}>
+            {device.notes}
+          </p>
+        )}
       </div>
 
-      {/* ── CPU blower warning ── */}
-      <div
-        className="flex items-start gap-3 rounded-xl border p-4"
-        style={{ background: "#1a1200", borderColor: "#3a2800" }}
-        data-testid="blower-warning"
-      >
-        <AlertTriangle size={16} style={{ color: "#fbbf24", flexShrink: 0, marginTop: 1 }} />
-        <div className="text-xs leading-relaxed" style={{ color: "#d4a843" }}>
-          <strong className="text-white">CPU blower fan is not controlled.</strong>{" "}
-          The MS-01's CPU blower is driven by an internal microcontroller and is not exposed via the
-          nct6798 hwmon interface. Only the system/chassis fans on <code className="font-mono text-yellow-400">pwm1</code> and{" "}
-          <code className="font-mono text-yellow-400">pwm2</code> respond to this configuration.
+      {/* ── Device-specific warnings ── */}
+      {!monitoringOnly && device?.family === "nct67xx" && (
+        <div
+          className="flex items-start gap-3 rounded-xl border p-4"
+          style={{ background: "#1a1200", borderColor: "#3a2800" }}
+          data-testid="blower-warning"
+        >
+          <AlertTriangle size={16} style={{ color: "#fbbf24", flexShrink: 0, marginTop: 1 }} />
+          <div className="text-xs leading-relaxed" style={{ color: "#d4a843" }}>
+            <strong className="text-white">CPU blower fan is not controlled.</strong>{" "}
+            The MS-01's CPU blower is driven by an internal microcontroller and is not exposed via the
+            nct6798 hwmon interface. Only the system/chassis fans on{" "}
+            <code className="font-mono text-yellow-400">pwm1</code> and{" "}
+            <code className="font-mono text-yellow-400">pwm2</code> respond to this configuration.
+          </div>
         </div>
-      </div>
+      )}
+
+      {device?.family === "ite87xx" && (
+        <div
+          className="flex items-start gap-3 rounded-xl border p-4"
+          style={{ background: "#3a2800", borderColor: "#78350f" }}
+          data-testid="ite-warning"
+        >
+          <AlertTriangle size={16} style={{ color: "#fbbf24", flexShrink: 0, marginTop: 1 }} />
+          <div className="text-xs leading-relaxed" style={{ color: "#d4a843" }}>
+            <strong className="text-white">ITE IT87xx — CPU fan limitation.</strong>{" "}
+            The CPU fan header (pwm4) has no sysfs interface on BD series boards. Connect your CPU
+            cooler to a <strong className="text-yellow-300">SYS_FAN header</strong> to regain control.
+          </div>
+        </div>
+      )}
+
+      {device?.family === "amd_no_pwm" && (
+        <div
+          className="flex items-start gap-3 rounded-xl border p-4"
+          style={{ background: "#1a1f3a", borderColor: "#1e3a5f" }}
+          data-testid="amd-info"
+        >
+          <Info size={16} style={{ color: "#3b82f6", flexShrink: 0, marginTop: 1 }} />
+          <div className="text-xs leading-relaxed" style={{ color: "#93b4e8" }}>
+            <strong className="text-white">AMD platform — monitoring only.</strong>{" "}
+            AMD SoC platforms do not expose PWM fan control via hwmon. Temperature monitoring is
+            active. For TDP control, use <code className="font-mono text-blue-300">ryzenadj</code>.
+          </div>
+        </div>
+      )}
+
+      {device?.family === "unsupported" && (
+        <div
+          className="flex items-start gap-3 rounded-xl border p-4"
+          style={{ background: "#3f1111", borderColor: "#7f1d1d" }}
+          data-testid="unsupported-warning"
+        >
+          <AlertTriangle size={16} style={{ color: "#f87171", flexShrink: 0, marginTop: 1 }} />
+          <div className="text-xs leading-relaxed" style={{ color: "#fca5a5" }}>
+            <strong className="text-white">Device not supported.</strong>{" "}
+            No compatible fan controller was detected. Fan control is not available on this hardware.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ── Stat card ────────────── */
+/* ── Stat card ────────────────────────────────────────────────── */
 function StatCard({ label, value, valueColor, sub, icon, bar, "data-testid": testId }: {
   label: string; value: string; valueColor?: string; sub?: string;
   icon: React.ReactNode;
@@ -154,10 +248,7 @@ function StatCard({ label, value, valueColor, sub, icon, bar, "data-testid": tes
         <span className="text-xs" style={{ color: "#666" }}>{label}</span>
         <span style={{ color: "#444" }}>{icon}</span>
       </div>
-      <div
-        className="text-2xl font-bold leading-none"
-        style={{ color: valueColor || "#f5f5f5" }}
-      >
+      <div className="text-2xl font-bold leading-none" style={{ color: valueColor || "#f5f5f5" }}>
         {value}
       </div>
       {bar && (
@@ -176,7 +267,7 @@ function StatCard({ label, value, valueColor, sub, icon, bar, "data-testid": tes
   );
 }
 
-/* ── Area chart ─────────────────── */
+/* ── Area chart ──────────────────────────────────────────────── */
 function ChartCard({ title, icon, data, min, max, color, fillColor, unit, "data-testid": testId }: {
   title: string; icon: React.ReactNode; data: number[];
   min: number; max: number; color: string; fillColor: string; unit: string;
@@ -204,10 +295,8 @@ function ChartCard({ title, icon, data, min, max, color, fillColor, unit, "data-
     const tx = (i: number) => PAD.left + (i / Math.max(pts - 1, 1)) * pW;
     const ty = (v: number) => PAD.top + pH - ((Math.max(min, Math.min(max, v)) - min) / range) * pH;
 
-    // Dashed grid lines
     ctx.setLineDash([2, 4]);
-    ctx.strokeStyle = "#2a2a2a";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1;
     [0, 0.25, 0.5, 0.75, 1].forEach(frac => {
       const y = PAD.top + frac * pH;
       ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + pW, y); ctx.stroke();
@@ -223,7 +312,6 @@ function ChartCard({ title, icon, data, min, max, color, fillColor, unit, "data-
       return;
     }
 
-    // Fill
     const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + pH);
     grad.addColorStop(0, fillColor); grad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.beginPath();
@@ -232,19 +320,16 @@ function ChartCard({ title, icon, data, min, max, color, fillColor, unit, "data-
     ctx.lineTo(tx(pts - 1), PAD.top + pH); ctx.lineTo(tx(0), PAD.top + pH);
     ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
 
-    // Line
     ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = "round";
     ctx.moveTo(tx(0), ty(data[0]));
     for (let i = 1; i < pts; i++) ctx.lineTo(tx(i), ty(data[i]));
     ctx.stroke();
 
-    // Latest value
     const last = data[pts - 1];
     ctx.fillStyle = color; ctx.font = "bold 11px JetBrains Mono, monospace";
     ctx.textAlign = "right";
     ctx.fillText(`${last.toFixed(last < 10 ? 1 : 0)}${unit}`, W - 8, PAD.top + 14);
 
-    // X labels
     ctx.fillStyle = "#555"; ctx.font = "10px JetBrains Mono"; ctx.textAlign = "center";
     const step = Math.max(1, Math.floor(pts / 6));
     for (let i = 0; i < pts; i += step) {
