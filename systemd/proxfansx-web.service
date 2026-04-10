@@ -1,0 +1,16 @@
+[Unit]
+Description=MS-01 FanControl - Web Dashboard
+After=network.target fancontrol.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/share/proxfansx
+ExecStart=/usr/local/share/proxfansx/proxfansx-web
+Restart=on-failure
+RestartSec=10
+Environment="PORT=8010"
+Environment="NODE_ENV=production"
+
+[Install]
+WantedBy=multi-user.target
